@@ -71,26 +71,6 @@ def custom_detector_postprocess(
     return results
 
 
-
-def get_model(self):
-    from yolox.models import YOLOPAFPN, YOLOX, YOLOXHead
-
-    def init_yolo(M):
-        for m in M.modules():
-            if isinstance(m, nn.BatchNorm2d):
-                m.eps = 1e-3
-                m.momentum = 0.03
-
-    if getattr(self, "model", None) is None:
-        in_channels = [256, 512, 1024]
-        backbone = YOLOPAFPN(self.depth, self.width, in_channels=in_channels)
-        head = YOLOXHead(self.num_classes, self.width, in_channels=in_channels)
-        model = YOLOX(backbone, head)
-
-    model.apply(init_yolo)
-    model.head.initialize_biases(1e-2)
-    return model
-
 @META_ARCH_REGISTRY.register()
 class CustomRCNN(GeneralizedRCNN):
     '''
