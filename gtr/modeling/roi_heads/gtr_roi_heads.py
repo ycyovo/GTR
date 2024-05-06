@@ -124,8 +124,9 @@ class GTRROIHeads(CascadeROIHeads):
         """
         if not self.asso_on:
             return {} if self.training else instances
-        asso_thresh = self.asso_thresh_train if self.training \
-            else self.asso_thresh_test
+        # asso_thresh = self.asso_thresh_train if self.training \
+        #     else self.asso_thresh_test
+        asso_thresh = 0.7
         fg_inds = [
             x.objectness_logits > asso_thresh for x in instances]
         proposals = [x[inds] for (x, inds) in zip(instances, fg_inds)]

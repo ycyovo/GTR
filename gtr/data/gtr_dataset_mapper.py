@@ -203,14 +203,15 @@ class GTRDatasetMapper(DatasetMapper):
             if gen_image_motion:
                 transforms = transforms_list[i]
                 image = transforms.apply_image(image)
-            elif transforms is None:
-                transforms = aug_input.apply_augmentations(self.augmentations)
-                image = aug_input.image
-            else:
-                image = transforms.apply_image(image)
+            # elif transforms is None:
+            #     transforms = aug_input.apply_augmentations(self.augmentations)
+            #     image = aug_input.image
+            # else:
+                # image = transforms.apply_image(image)
 
             image_shape = image.shape[:2]  # h, w
-            dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+            # dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+            dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image))
 
             if not self.is_train:
                 dataset_dict.pop("annotations", None)

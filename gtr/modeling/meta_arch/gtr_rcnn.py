@@ -47,7 +47,7 @@ class GTRRCNN(CustomRCNN):
         return ret
 
 
-    def forward(self, batched_inputs):
+    def forward(self, batched_inputs, cfg):
         """
         All batched images are from the same video
         During testing, the current implementation requires all frames 
@@ -58,7 +58,7 @@ class GTRRCNN(CustomRCNN):
             if self.local_track:
                 return self.local_tracker_inference(batched_inputs)
             else:
-                return self.sliding_inference(batched_inputs)
+                return self.sliding_inference(batched_inputs,cfg)
 
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
@@ -73,13 +73,16 @@ class GTRRCNN(CustomRCNN):
         return losses
 
 
-    def sliding_inference(self, batched_inputs):
+    def sliding_inference(self, batched_inputs,cfg):
         video_len = len(batched_inputs)
         instances = []
         id_count = 0
         for frame_id in range(video_len):
+            if( frame_id % 20 == 0 ) :
+                print(f"pencentage:{frame_id/video_len}")
             instances_wo_id = self.inference(
-                batched_inputs[frame_id: frame_id + 1], 
+                batched_inputs[frame_id: frame_id + 1],
+                cfg,
                 do_postprocess=False)
             instances.extend([x for x in instances_wo_id])
 
