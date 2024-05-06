@@ -86,7 +86,7 @@ def do_test(cfg, model):
                     cfg, False, augmentations=build_custom_augmentation(cfg, False))
             data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
             results[dataset_name] = inference_on_dataset(
-                model, data_loader, evaluator)
+                model, cfg, data_loader, evaluator)
         else:
             if not comm.is_main_process():
                 continue
@@ -101,7 +101,7 @@ def do_test(cfg, model):
             data_loader = build_gtr_test_loader(cfg, dataset_name, mapper)
             # TODO (Xingyi): create a new video inference pipeline
             results[dataset_name] = inference_on_dataset(
-                model, data_loader, evaluator, 
+                model, cfg, data_loader, evaluator, 
             )
         
         if comm.is_main_process():
