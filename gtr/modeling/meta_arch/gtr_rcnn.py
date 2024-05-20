@@ -1,10 +1,13 @@
 import cv2
 import torch
+import numpy as np
 from scipy.optimize import linear_sum_assignment
 import torch.nn.functional as F
 
 from detectron2.config import configurable
 from detectron2.structures import Boxes, pairwise_iou, Instances
+from detectron2.data import transforms as T
+from gtr.data.custom_build_augmentation import build_custom_augmentation
 
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from .custom_rcnn import CustomRCNN
@@ -54,22 +57,30 @@ class GTRRCNN(CustomRCNN):
             in a video are loaded.
         TODO (Xingyi): one-the-fly testing
         """
+        # import ipdb; ipdb.set_trace()
         if not self.training:
             if self.local_track:
                 return self.local_tracker_inference(batched_inputs)
             else:
                 return self.sliding_inference(batched_inputs,cfg)
 
-        images = self.preprocess_image(batched_inputs)
-        features = self.backbone(images.tensor)
-        gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
-        proposals, proposal_losses = self.proposal_generator(
-            images, features, gt_instances)
+        with torch.no_grad():
+        
+            images = self.preprocess_image(batched_inputs)
+            features = self.backbone(images.tensor)
+
+            gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
+            # proposals, proposal_losses = self.proposal_generator(
+                # images, features, gt_instances)
+
+            proposals = self.inference_yolo(batched_inputs,images[0].shape,cfg)
+
+        
         _, detector_losses = self.roi_heads(
             images, features, proposals, gt_instances)
         losses = {}
         losses.update(detector_losses)
-        losses.update(proposal_losses)
+        # losses.update(proposal_losses)
         return losses
 
 
