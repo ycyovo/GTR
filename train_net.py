@@ -113,6 +113,13 @@ def do_test(cfg, model):
     return results
 
 def do_train(cfg, model, resume=False):
+    for name, parameter in model.named_parameters():
+        if 'yolo_model' in name :
+            if parameter.is_leaf == True :
+                parameter.requires_grad = False
+            else :
+                parameter.detach_()
+            # print('%-40s%-20s%s' %(name, parameter.requires_grad, parameter.is_leaf))
     model = check_if_freeze_model(model, cfg)
     model.train()
     if cfg.SOLVER.USE_CUSTOM_SOLVER:
@@ -171,7 +178,7 @@ def do_train(cfg, model, resume=False):
             step_timer.reset()
             iteration = iteration + 1
             storage.step()
-            loss_dict = model(data)
+            loss_dict = model(data,cfg)
             
             losses = sum(
                 loss for k, loss in loss_dict.items() if 'loss' in k)
