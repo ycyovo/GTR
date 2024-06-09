@@ -174,6 +174,7 @@ def convert_to_coco_format(outputs, info_imgs, shape_target):
             # }  # COCO json format
     return Instances.cat(list_instances)
 
+
 @META_ARCH_REGISTRY.register()
 class CustomRCNN(GeneralizedRCNN):
     '''
@@ -196,6 +197,39 @@ class CustomRCNN(GeneralizedRCNN):
         ret['not_clamp_box'] = cfg.INPUT.NOT_CLAMP_BOX
         return ret
 
+    def inference_yolo(
+        self,
+        batched_inputs,
+        image_shape,
+        cfg
+    ):
+        proposal_list = []
+        for i in range(len(batched_inputs)):
+            image_tensor = batched_inputs[i]['image_for_yolo']
+            image_numpy = image_tensor.numpy()
+
+            tensor_type = torch.cuda.HalfTensor
+
+            image_numpy = image_numpy[:, :, ::-1]
+            image_after_preproc = preproc(image_numpy)
+            
+            # image -> format for yolo
+            image_for_yolo = torch.from_numpy(np.asarray(image_after_preproc).copy()).clone() #.to('cuda:0')
+            image_for_yolo = image_for_yolo.unsqueeze(0)
+            image_for_yolo = image_for_yolo.float()
+            image_for_yolo = image_for_yolo.type(tensor_type)
+
+            self.yolo_model.training = False
+            self.yolo_model.head.training = False
+            outputs = self.yolo_model( image_for_yolo )
+
+            # import ipdb; ipdb.set_trace()
+            outputs = postprocess(outputs, 1, 0.01, 0.7)
+            info_imgs = [ torch.tensor([(image_tensor.shape)[0]]) , torch.tensor([(image_tensor.shape)[1]]) ]
+            proposal = convert_to_coco_format(outputs, info_imgs , image_shape)
+            proposal_list.append(proposal)
+        return proposal_list
+
     def inference(
         self,
         batched_inputs: Tuple[Dict[str, torch.Tensor]],
@@ -206,40 +240,29 @@ class CustomRCNN(GeneralizedRCNN):
         """
         Allow not clamp box for MOT datasets
         """
-        image_tensor = batched_inputs[0]['image']
-        image_numpy = image_tensor.numpy()
+        # image_tensor = batched_inputs[0]['image_for_yolo']
+        # image_numpy = image_tensor.numpy()
 
-        aug_input = T.StandardAugInput(image_numpy)
-        augmentations = build_custom_augmentation(cfg,False)
-        transforms = aug_input.apply_augmentations(augmentations)
-        image_features = aug_input.image
-        image_features = torch.as_tensor(np.ascontiguousarray(image_features.transpose(2, 0, 1)))
+        # aug_input = T.StandardAugInput(image_numpy)
+        # augmentations = build_custom_augmentation(cfg,False)
+        # transforms = aug_input.apply_augmentations(augmentations)
+        # image_features = aug_input.image
+        # image_features = torch.as_tensor(np.ascontiguousarray(image_features.transpose(2, 0, 1)))
         
         # dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
-        batched_inputs[0]['image'] = image_features
+        # batched_inputs[0]['image'] = image_features
+        
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
-
-        assert not self.training
-        tensor_type = torch.cuda.HalfTensor
-
-        image_numpy = image_numpy[:, :, ::-1]
-        image_after_preproc = preproc(image_numpy)
         
-        # image -> format for yolo
-        image_for_yolo = torch.from_numpy(np.asarray(image_after_preproc).copy()).clone() #.to('cuda:0')
-        image_for_yolo = image_for_yolo.unsqueeze(0)
-        image_for_yolo = image_for_yolo.float()
-        image_for_yolo = image_for_yolo.type(tensor_type)
-
-        outputs = self.yolo_model( image_for_yolo )
+        # batched_inputs[0]['image'] = image_tensor
 
         # import ipdb; ipdb.set_trace()
-        outputs = postprocess(outputs, 1, 0.01, 0.7)
-        info_imgs = [ torch.tensor([(image_tensor.shape)[0]]) , torch.tensor([(image_tensor.shape)[1]]) ]
-        output_results = convert_to_coco_format(outputs, info_imgs , images[0].shape)
+        output_results = self.inference_yolo(batched_inputs,images[0].shape,cfg)
+
+        assert not self.training
         
-        results, _ = self.roi_heads(images, features, [output_results], None)
+        results, _ = self.roi_heads(images, features, output_results, None)
         return results
 
         # if detected_instances is None:

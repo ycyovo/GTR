@@ -1,5 +1,6 @@
 import cv2
 import torch
+import torchvision
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 import torch.nn.functional as F
@@ -12,6 +13,123 @@ from gtr.data.custom_build_augmentation import build_custom_augmentation
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from .custom_rcnn import CustomRCNN
 from ..roi_heads.custom_fast_rcnn import custom_fast_rcnn_inference
+
+from torch import nn
+from diffusers import DDPMScheduler, UNet2DModel
+
+def output_model( model ) :
+    for name, param in model.named_parameters():
+        print(name, param.size())
+
+def get_distance_IOU_matrix(instance_list, Mat_n, Mat_Tn):
+
+    # 
+    # box_list = torch.cat([ x.get("gt_boxes").tensor for x in instance_list ])
+    # Iou = torchvision.ops.generalized_box_iou(box_list,box_list) + 1
+    # Iou_extense = torch.nn.functional.pad( Iou , ( 0 , N_diff - len(box_list) , 0 , N_diff - len(box_list) ) )
+
+    instance_list_n = [instance_list[-1]]
+    instance_list_Tn = instance_list[:-1]
+    box_list_n = torch.cat([ x.get("gt_boxes").tensor for x in instance_list_n ])
+    box_list_Tn = torch.cat([ x.get("gt_boxes").tensor for x in instance_list_Tn ])
+    Iou = torchvision.ops.generalized_box_iou(box_list_n,box_list_Tn) + 1
+    Iou_extense = torch.nn.functional.pad( Iou , ( 0 , Mat_Tn - len(box_list_Tn) , 0 , Mat_n - len(box_list_n) ) )
+
+    return Iou_extense.unsqueeze(0).unsqueeze(0)
+
+    ### To be completed : fading coefficient
+
+
+def get_matching_matrix(instance_list, Mat_n ,  Mat_Tn):
+    # import ipdb; ipdb.set_trace()
+    # if N_list.sum().item() > self.fuck_max :
+    #     self.fuck_max = N_list.sum().item()
+    #     print("New_max : " , self.fuck_max)
+    #     print(N_list)
+    #     self.flag = True
+    T = len(instance_list)
+    N_list = torch.tensor([ len(x) for x in instance_list ]) 
+    N_presum_list = torch.cumsum( N_list , dim=0 )
+    my_dict = {}
+
+    # print(N_list)
+    # print(N_presum_list)
+    # n * Tn
+    matching_matrix = torch.zeros( ( Mat_n, Mat_Tn ) )
+    cur_id = 0
+    for frame_id,x in enumerate(instance_list) :
+        track_id = x.get("gt_instance_ids")
+        if frame_id == len(instance_list) - 1 :
+            cur_id = 0
+            # import ipdb; ipdb.set_trace()
+        for i,value_tensor in enumerate(track_id):
+            value = value_tensor.item()
+            last_id = my_dict.get(value)
+            if last_id == None:
+                my_dict[value] = cur_id
+            else :
+                if frame_id == len(instance_list) - 1 : 
+                    # matching_matrix[last_id][cur_id] = 1
+                    matching_matrix[cur_id][last_id] = 1
+                my_dict[value] = cur_id
+            cur_id += 1
+    
+
+    # Tn * Tn
+    # matching_matrix = torch.zeros( (N_diff,N_diff) )
+    # cur_id = 0
+    # for frame_id,x in enumerate(instance_list) :
+    #     track_id = x.get("gt_instance_ids")
+    #     for i,value_tensor in enumerate(track_id):
+    #         value = value_tensor.item()
+    #         last_id = my_dict.get(value)
+    #         if last_id == None:
+    #             my_dict[value] = cur_id
+    #         else :
+    #             matching_matrix[last_id][cur_id] = 1
+    #             matching_matrix[cur_id][last_id] = 1
+    #             my_dict[value] = cur_id
+    #         cur_id += 1
+
+    return matching_matrix.unsqueeze(0).unsqueeze(0)
+
+
+# def ycy_code(instance_list, is_gt):
+
+class ClassConditionedUnet(nn.Module):
+    def __init__(self, num_classes=10, class_emb_size=1):
+        super().__init__()
+        
+        # The embedding layer will map the class label to a vector of size class_emb_size
+        self.class_emb = nn.Embedding(num_classes, class_emb_size)
+
+        # Self.model is an unconditional UNet with extra input channels to accept the conditioning information (the class embedding)
+        self.model = UNet2DModel(
+            sample_size=28,           # the target image resolution
+            in_channels=1 + class_emb_size, # Additional input channels for class cond.
+            out_channels=1,           # the number of output channels
+            layers_per_block=2,       # how many ResNet layers to use per UNet block
+            block_out_channels=(32, 64, 64), 
+            down_block_types=( 
+                "DownBlock2D",        # a regular ResNet downsampling block
+                "AttnDownBlock2D",    # a ResNet downsampling block with spatial self-attention
+                "AttnDownBlock2D",
+            ), 
+            up_block_types=(
+                "AttnUpBlock2D", 
+                "AttnUpBlock2D",      # a ResNet upsampling block with spatial self-attention
+                "UpBlock2D",          # a regular ResNet upsampling block
+            ),
+        )
+    # Our forward method now takes the class labels as an additional argument
+    def forward(self, x, t, class_labels):
+        bs, ch, w, h = x.shape
+        # class conditioning in right shape to add as additional input channels
+        # x is shape (bs, 1, 28, 28) and class_cond is now (bs, 4, 28, 28)
+        # Net input is now x and class cond concatenated together along dimension 1
+        net_input = torch.cat((x, class_labels), 1) # (bs, 5, 28, 28)
+        return self.model(net_input, t).sample # (bs, 1, 28, 28)
+
 
 @META_ARCH_REGISTRY.register()
 class GTRRCNN(CustomRCNN):
@@ -31,6 +149,25 @@ class GTRRCNN(CustomRCNN):
         self.local_iou_only = kwargs.pop('local_iou_only')
         self.not_mult_thresh = kwargs.pop('not_mult_thresh')
         super().__init__(**kwargs)
+        
+        self.noise_scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule='squaredcos_cap_v2')
+        self.net = ClassConditionedUnet().to(self.device)
+        self.loss_fn = nn.MSELoss()
+        self.opt = torch.optim.Adam(self.net.parameters(), lr=1e-3) 
+        # self.fuck_max = 0
+        # self.flag = False
+        # self.Unet = Unet(
+        #     dim = 64,
+        #     dim_mults = (1, 2, 4, 8),
+        #     num_classes = num_classes,
+        #     cond_drop_prob = 0.5
+        # )
+        # self.diffusion = GaussianDiffusion(
+        #     self.Unet,
+        #     image_size = 512,
+        #     timesteps = 1000,
+        #     sampling_timesteps = 50
+        # ).cuda()
 
 
     @classmethod
@@ -49,38 +186,54 @@ class GTRRCNN(CustomRCNN):
         ret['not_mult_thresh'] = cfg.VIDEO_TEST.NOT_MULT_THRESH
         return ret
 
-
-    def forward(self, batched_inputs, cfg):
+    def forward(self, batched_inputs):
         """
         All batched images are from the same video
         During testing, the current implementation requires all frames 
             in a video are loaded.
         TODO (Xingyi): one-the-fly testing
         """
-        # import ipdb; ipdb.set_trace()
-        if not self.training:
-            if self.local_track:
-                return self.local_tracker_inference(batched_inputs)
-            else:
-                return self.sliding_inference(batched_inputs,cfg)
+        # if not self.training:
+            # if self.local_track:
+                # return self.local_tracker_inference(batched_inputs)
+            # else:
+                # return self.sliding_inference(batched_inputs,cfg)
 
+        # import ipdb; ipdb.set_trace()
         with torch.no_grad():
         
-            images = self.preprocess_image(batched_inputs)
-            features = self.backbone(images.tensor)
+            # images = self.preprocess_image(batched_inputs)
+            # features = self.backbone(images.tensor)
 
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
-            # proposals, proposal_losses = self.proposal_generator(
-                # images, features, gt_instances)
+            # proposals = self.inference_yolo(batched_inputs,images[0].shape,cfg)
 
-            proposals = self.inference_yolo(batched_inputs,images[0].shape,cfg)
+            matching_matrix = ((get_matching_matrix(gt_instances,52,1600)*2)-1).to(self.device)
+            
+            # import ipdb; ipdb.set_trace()
+            condition_matrix = get_distance_IOU_matrix(gt_instances,52,1600)-1
+            noise = torch.randn_like(matching_matrix)
+            timesteps = torch.randint(0, 999, (matching_matrix.shape[0],)).long().to(self.device)
+            noisy_x = self.noise_scheduler.add_noise( matching_matrix , noise , timesteps )
 
-        
-        _, detector_losses = self.roi_heads(
-            images, features, proposals, gt_instances)
+        # print("Before")
+        pred = self.net( noisy_x , timesteps , condition_matrix )
+        # print("After")
+
+        loss = self.loss_fn( pred , noise )
+
         losses = {}
-        losses.update(detector_losses)
-        # losses.update(proposal_losses)
+        losses['loss_diff'] = loss
+        
+        # if self.flag :
+        #     # import ipdb; ipdb.set_trace()
+        #     self.flag = False
+        #     print( batched_inputs[0]['file_name'] )
+        #     print( batched_inputs[1]['file_name'] )
+        #     print( batched_inputs[2]['file_name'] )
+        #     print( batched_inputs[3]['file_name'] )
+        #     print( batched_inputs[4]['file_name'] )
+
         return losses
 
 
@@ -127,6 +280,7 @@ class GTRRCNN(CustomRCNN):
 
 
     def run_global_tracker(self, batched_inputs, instances, k, id_count):
+        # import ipdb; ipdb.set_trace()
         n_t = [len(x) for x in instances]
         N, T = sum(n_t), len(n_t)
 
