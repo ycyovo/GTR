@@ -139,14 +139,30 @@ class GTRDatasetMapper(DatasetMapper):
         """
         video_dict: {'video_id': int, 'images': [{'image_id', 'annotations': []}]}
         """
+        # print( len( video_dict[ 'images' ] ) )
+        # print(self.train_len)
+
         if self.is_train:
             num_frames = min(len(video_dict['images']), self.train_len)
         else:
             num_frames = len(video_dict['images'])
+        # print("num_frames=",num_frames)
         st = np.random.randint(len(video_dict['images']) - num_frames + 1)
+        
+        random_select = np.random.randint(3)
+        if not self.is_train :
+            ed = len(video_dict['images'])-1
+        else :
+            if len(video_dict['images']) != 1 :
+                if random_select == 2 :
+                    ed = np.random.randint(self.train_len)+1
+                else:
+                    ed = np.random.randint(len(video_dict['images'])-1) + 1
         gen_image_motion = self.gen_image_motion and self.is_train and \
             len(video_dict['images']) == 1
-
+        # print("len=",len(video_dict['images']))
+        # print("st=",st)
+        # print("gen_image_motion=",gen_image_motion)
         if self.dynamic_scale and self.is_train and not gen_image_motion:
             image = utils.read_image(
                 video_dict['images'][st]["file_name"], format=self.image_format)
@@ -160,9 +176,10 @@ class GTRDatasetMapper(DatasetMapper):
                     max_frames - self.train_len + 1) + self.train_len
                 num_frames = min(self.train_len * 2, num_frames)
                 num_frames = min(len(video_dict['images']), num_frames)
+            num_frames = self.train_len
         else:
             transforms = None
-        
+
         if gen_image_motion:
             num_frames = self.train_len
             images_dict = [copy.deepcopy(
@@ -186,36 +203,40 @@ class GTRDatasetMapper(DatasetMapper):
                 trans[0].scaled_w = int(width * trans[0].img_scale)
                 transforms_list.append(trans)
         elif self.sample_range > 1. and self.is_train:
-            ed = min(st + int(self.sample_range * num_frames), len(video_dict['images']))
-            num_frames = min(num_frames, ed - st)
-            inds = sorted(
-                np.random.choice(range(st, ed), size=num_frames, replace=False))
-            images_dict = copy.deepcopy([video_dict['images'][x] for x in inds])
+            # ed = min(st + int(self.sample_range * num_frames), len(video_dict['images']))
+            # num_frames = min(num_frames, ed - st)
+            # inds = sorted(
+                # np.random.choice(range(st, ed), size=num_frames, replace=False))
+            # print("ed=",ed)
+            # print("inds=",inds)
+            # images_dict = copy.deepcopy([video_dict['images'][x] for x in inds])
+            images_dict = copy.deepcopy(video_dict['images'][ max(0,ed-num_frames+1) : ed + 1])
         else:
-            images_dict = copy.deepcopy(video_dict['images'][st: st + num_frames])
+            images_dict = copy.deepcopy(video_dict['images'][ max(0,ed-num_frames+1) : ed + 1])
         
         ret = []
         for i, dataset_dict in enumerate(images_dict):
             image = utils.read_image(dataset_dict["file_name"], format=self.image_format)
+            dataset_dict["image_for_yolo"] = torch.as_tensor(np.ascontiguousarray(image.copy()))
             utils.check_image_size(dataset_dict, image)
 
             aug_input = T.StandardAugInput(image)
             if gen_image_motion:
                 transforms = transforms_list[i]
                 image = transforms.apply_image(image)
-            # elif transforms is None:
-            #     transforms = aug_input.apply_augmentations(self.augmentations)
-            #     image = aug_input.image
-            # else:
-                # image = transforms.apply_image(image)
+            elif transforms is None:
+                transforms = aug_input.apply_augmentations(self.augmentations)
+                image = aug_input.image
+            else:
+                image = transforms.apply_image(image)
 
             image_shape = image.shape[:2]  # h, w
-            # dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
-            dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image))
+            dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+            # dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.copy()))
 
-            if not self.is_train:
-                dataset_dict.pop("annotations", None)
-                dataset_dict.pop("sem_seg_file_name", None)
+            # if not self.is_train:
+            #     dataset_dict.pop("annotations", None)
+            #     dataset_dict.pop("sem_seg_file_name", None)
 
             if "annotations" in dataset_dict:
                 for anno in dataset_dict["annotations"]:

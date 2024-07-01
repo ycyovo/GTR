@@ -29,6 +29,7 @@ def build_gtr_train_loader(cfg, mapper):
     Modified from detectron2.data.build.build_custom_train_loader, but supports
     different samplers
     """
+    # import ipdb; ipdb.set_trace()
     dataset_dicts = get_video_dataset_dicts(
         cfg.DATASETS.TRAIN,
         gen_inst_id=cfg.INPUT.VIDEO.GEN_IMAGE_MOTION,
@@ -36,6 +37,7 @@ def build_gtr_train_loader(cfg, mapper):
     sizes = [0 for _ in range(len(cfg.DATASETS.TRAIN))]
     for d in dataset_dicts:
         sizes[d['dataset_source']] += 1
+    # import ipdb; ipdb.set_trace()
     dataset = DatasetFromList(dataset_dicts, copy=False)
     dataset = MapDataset(dataset, mapper)
 
@@ -74,8 +76,10 @@ def build_gtr_train_loader(cfg, mapper):
 def build_gtr_test_loader(cfg, dataset_name, mapper):
     """
     """
+    # import ipdb; ipdb.set_trace()
     dataset = get_video_dataset_dicts(
         [dataset_name],
+        gen_inst_id = True,
     )
     dataset = DatasetFromList(dataset, copy=False)
     dataset = MapDataset(dataset, mapper)
